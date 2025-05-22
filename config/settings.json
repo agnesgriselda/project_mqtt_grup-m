@@ -1,0 +1,15 @@
+{
+    "broker_address": "test.mosquitto.org",
+    "broker_port": 1883,
+    "client_id_prefix": "my_simple_mqtt_app_",
+    "topics": {
+        "temperature": "iot/tutorial/python/temperature_qos2_test",
+        "lamp_command": "iot/tutorial/python/lamp/command_qos2_test",
+        "lamp_status": "iot/tutorial/python/lamp/status_qos2_test",
+        "sensor_lwt": "iot/tutorial/python/sensor/lwt_status",
+        "lamp_lwt": "iot/tutorial/python/lamp/lwt_status"
+    },
+    "default_qos": 2,
+    "lwt_qos": 1,
+    "lwt_retain": true
+}
