@@ -1,51 +1,38 @@
 {
-    "broker_address": "test.mosquitto.org",
-    "broker_port": 1883,
-    "client_id_prefix": "my_simple_mqtt_app_",
+    "broker_address": "localhost",
+    "client_id_prefix": "my_secure_local_app_",
     "topics": {
-        "temperature": "iot/tutorial/python/temperature_qos2_test", // Ini akan menjadi topic data utama suhu
-        "lamp_command": "iot/tutorial/python/lamp/command_qos2_test",
-        "lamp_status": "iot/tutorial/python/lamp/status_qos2_test",
-        "sensor_lwt": "iot/tutorial/python/sensor/lwt_status",
-        "lamp_lwt": "iot/tutorial/python/lamp/lwt_status",
-        // --- TAMBAHAN TOPIK BARU ---
-        "humidity_data": "iot/tutorial/python/humidity_data_test", // Jika sensor juga mengirim kelembaban
-        "panel_lwt": "iot/tutorial/python/panel/lwt_status",     // LWT untuk panel client
-        "temperature_response_base": "iot/tutorial/python/temperature/response/", // Base untuk response data suhu
-        "lamp_command_response_base": "iot/tutorial/python/lamp/command/response/"  // Base untuk response command lampu
+        "temperature": "iot/project/temperature_m5_test",
+        "lamp_command": "iot/project/lamp/command_m5",
+        "lamp_status": "iot/project/lamp/status_m5",
+        "sensor_lwt": "iot/project/sensor/lwt_m5",
+        "lamp_lwt": "iot/project/lamp/lwt_m5",
+        "humidity_data": "iot/project/humidity_data_m5",
+        "panel_lwt": "iot/project/panel/lwt_m5",
+        "temperature_response_base": "iot/project/temperature/response_m5/",
+        "lamp_command_response_base": "iot/project/lamp/command/response_m5/"
     },
-    "default_qos": 2,
+    "default_qos": 1,
     "lwt_qos": 1,
     "lwt_retain": true,
-
-    // --- TAMBAHAN KONFIGURASI BARU (level atas) ---
     "mqtt_advanced_settings": {
-        "port_tls": 8883,                   // Port untuk koneksi TLS
-        "use_tls": true,                    // true untuk menggunakan TLS, false sebaliknya
-        "ca_cert_path": "certs/mosquitto.org.crt", // Path relatif ke CA certificate dari root proyek
-                                                 // Untuk test.mosquitto.org, ini adalah CA mereka.
-                                                 // Jika null atau string kosong, paho-mqtt mungkin mencoba sistem CAs.
-        // "client_cert_path": "certs/client.crt", // Opsional, untuk mTLS
-        // "client_key_path": "certs/client.key",   // Opsional, untuk mTLS
-        
-        "use_auth": false,                  // true untuk menggunakan autentikasi username/password
-        "username": "YOUR_MQTT_USERNAME",   // Ganti jika use_auth true
-        "password": "YOUR_MQTT_PASSWORD",   // Ganti jika use_auth true
-        
-        "keepalive": 60,                    // Durasi keepalive dalam detik
-        
-        "v5_receive_maximum": 10,           // Default ReceiveMaximum untuk client (Flow Control MQTTv5)
-        "default_message_expiry_interval": 300 // Default Message Expiry untuk publish (detik), 0 atau null = tidak kadaluarsa.
-                                                 // Ini adalah fallback jika tidak diset per pesan.
+        "port_tls": 8883,
+        "use_tls": true,
+        "ca_cert_path": "certs/myca.pem",
+        "use_auth": true,
+        "username": "user_mqtt_kita",
+        "password": "insisgrupm",
+        "keepalive": 60,
+        "v5_receive_maximum": 10,
+        "default_message_expiry_interval": 10
     },
     "panel_specific_settings": {
-        "subscribed_topics_list": [          // Daftar topic yang akan disubscribe oleh panel_client
-            "iot/tutorial/python/temperature_qos2_test", // Dari "topics.temperature"
-            "iot/tutorial/python/lamp/status_qos2_test",   // Dari "topics.lamp_status"
-            "iot/tutorial/python/humidity_data_test",    // Dari "topics.humidity_data" (jika ada)
-            "iot/tutorial/python/sensor/lwt_status",     // Dari "topics.sensor_lwt"
-            "iot/tutorial/python/lamp/lwt_status"        // Dari "topics.lamp_lwt"
-            // Anda bisa menambahkan topic lain di sini secara manual jika perlu
+        "subscribed_topics_list": [
+            "iot/project/temperature_m5_test",
+            "iot/project/lamp/status_m5",
+            "iot/project/humidity_data_m5",
+            "iot/project/sensor/lwt_m5",
+            "iot/project/lamp/lwt_m5"
         ]
     }
 }

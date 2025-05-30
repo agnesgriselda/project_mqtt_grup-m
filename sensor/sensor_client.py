@@ -1,10 +1,11 @@
 # sensor/sensor_client.py
+import paho.mqtt.client as mqtt # Untuk konstanta MQTT_ERR_SUCCESS dll.
 import time
 import json
 import random
 import uuid
 from pathlib import Path
-import sys # Untuk menambahkan common ke path
+import sys
 
 # Tambahkan direktori common ke sys.path agar bisa import mqtt_utils
 COMMON_DIR = Path(__file__).resolve().parent.parent / 'common'
@@ -14,263 +15,238 @@ from mqtt_utils import (
     GLOBAL_SETTINGS,
     create_mqtt_client,
     publish_message,
-    # subscribe_to_topics, # Sensor ini mungkin tidak subscribe, tapi bisa ditambahkan jika perlu
+    # subscribe_to_topics, # Tidak selalu dibutuhkan sensor, kecuali untuk response
     disconnect_client
 )
-# Import Properties dan PacketTypes jika diperlukan langsung di sini
-from mqtt_utils import Properties, PacketTypes
+# Import Properties dan PacketTypes jika suatu saat perlu membuat properties secara manual di sini
+# from mqtt_utils import Properties, PacketTypes
 
 
 # --- Mengambil Konfigurasi dari GLOBAL_SETTINGS ---
-# Konfigurasi broker, TLS, auth, dll. akan dihandle oleh create_mqtt_client()
-
-# Topik dari config
 topics_config = GLOBAL_SETTINGS.get("topics", {})
-TEMPERATURE_TOPIC_DATA = topics_config.get("temperature") # Ini adalah topic data suhu dari config lama
-# Jika ada topic humidity di config baru:
-HUMIDITY_TOPIC_DATA = topics_config.get("humidity_data") # Dari config baru
-
-# Topic untuk LWT Sensor
+TEMPERATURE_TOPIC_DATA = topics_config.get("temperature")
+HUMIDITY_TOPIC_DATA = topics_config.get("humidity_data") # Jika ada di config
 SENSOR_LWT_TOPIC = topics_config.get("sensor_lwt")
+TEMPERATURE_RESPONSE_BASE = topics_config.get("temperature_response_base") # Untuk Req/Res
 
-# Base topic untuk response jika sensor mengirim data sebagai request
-TEMPERATURE_RESPONSE_BASE = topics_config.get("temperature_response_base") # Dari config baru
-
-# Konfigurasi QoS dan Retain dari GLOBAL_SETTINGS
 DEFAULT_QOS_SENSOR = GLOBAL_SETTINGS.get("default_qos", 1)
 LWT_QOS_SENSOR = GLOBAL_SETTINGS.get("lwt_qos", 1)
 LWT_RETAIN_SENSOR = GLOBAL_SETTINGS.get("lwt_retain", True)
 
-# Konfigurasi Advanced (digunakan untuk message expiry)
 mqtt_advanced_cfg = GLOBAL_SETTINGS.get("mqtt_advanced_settings", {})
+# Message Expiry untuk data sensor akan diambil dari GLOBAL_SETTINGS oleh publish_message di mqtt_utils
+# jika tidak di-override secara spesifik saat memanggil publish_message.
 DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA = mqtt_advanced_cfg.get("default_message_expiry_interval")
 
 
-CLIENT_ID_PREFIX = GLOBAL_SETTINGS.get('client_id_prefix', 'sensor_v5_')
+CLIENT_ID_PREFIX = GLOBAL_SETTINGS.get('client_id_prefix', 'sensor_m5_') # Contoh prefix baru
 CLIENT_ID = f"{CLIENT_ID_PREFIX}{str(uuid.uuid4())[:8]}"
 
 # Validasi konfigurasi dasar topik
 if not TEMPERATURE_TOPIC_DATA:
-    print(f"Error ({CLIENT_ID}): temperature topic ('topics.temperature') not found in configuration. Sensor cannot publish temperature data.")
+    print(f"Error ({CLIENT_ID}): temperature topic ('topics.temperature') not found in configuration. Sensor cannot publish temperature data. Exiting.")
     exit(1)
 if not SENSOR_LWT_TOPIC:
     print(f"Warning ({CLIENT_ID}): Sensor LWT topic ('sensor_lwt') not found in config. LWT functionality will be disabled for {CLIENT_ID}.")
 
 print(f"--- Sensor Client MQTTv5 ({CLIENT_ID}) ---")
+# (Anda bisa menambahkan print info broker dari GLOBAL_SETTINGS.get("broker_address") jika mau)
 print(f"Temperature Publish Topic: {TEMPERATURE_TOPIC_DATA}, QoS: {DEFAULT_QOS_SENSOR}")
 if HUMIDITY_TOPIC_DATA: print(f"Humidity Publish Topic: {HUMIDITY_TOPIC_DATA}, QoS: {DEFAULT_QOS_SENSOR}")
 if SENSOR_LWT_TOPIC:
     print(f"LWT Topic: {SENSOR_LWT_TOPIC}, QoS: {LWT_QOS_SENSOR}, Retain: {LWT_RETAIN_SENSOR}")
 if TEMPERATURE_RESPONSE_BASE:
-    print(f"Temperature data will be sent as REQUEST, expecting response on base: {TEMPERATURE_RESPONSE_BASE}")
+    print(f"Temperature data may be sent as REQUEST, expecting response on base: {TEMPERATURE_RESPONSE_BASE}")
+if DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA is not None:
+    print(f"Default Message Expiry for data publishes (from settings): {DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA}s")
 print("-" * 30)
 
-# LWT Payloads untuk sensor ini
-SENSOR_LWT_PAYLOAD_ONLINE = None
-SENSOR_LWT_PAYLOAD_OFFLINE_UNEXPECTED = None # Untuk will_set
-SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL = None   # Untuk disconnect normal
-if SENSOR_LWT_TOPIC:
-    timestamp_now_lwt = time.time()
-    SENSOR_LWT_PAYLOAD_ONLINE = json.dumps({"client_id": CLIENT_ID, "status": "online", "timestamp": timestamp_now_lwt})
-    SENSOR_LWT_PAYLOAD_OFFLINE_UNEXPECTED = json.dumps({"client_id": CLIENT_ID, "status": "offline_unexpected", "timestamp": timestamp_now_lwt})
-    SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL = json.dumps({"client_id": CLIENT_ID, "status": "offline_graceful", "timestamp": timestamp_now_lwt})
+# Buat payload LWT di sini agar timestamp-nya update saat skrip dijalankan
+SENSOR_LWT_PAYLOAD_ONLINE_str = json.dumps({"client_id": CLIENT_ID, "status": "online", "timestamp": time.time()}) if SENSOR_LWT_TOPIC else None
+SENSOR_LWT_PAYLOAD_OFFLINE_UNEXPECTED_str = json.dumps({"client_id": CLIENT_ID, "status": "offline_unexpected", "timestamp": time.time()}) if SENSOR_LWT_TOPIC else None
+# Template untuk offline graceful, timestamp akan diisi saat disconnect
+SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL_template = {"client_id": CLIENT_ID, "status": "offline_graceful"} if SENSOR_LWT_TOPIC else {}
 
-# Untuk melacak request yang dikirim oleh sensor dan menunggu response
-active_sensor_requests = {} # key: correlation_id, value: {'response_topic': str, 'timestamp': float}
 
-# --- Callback MQTT Spesifik untuk Sensor ---
+active_sensor_requests = {} # {correlation_id: {details}}
+is_connected_flag = False # Flag untuk menandakan koneksi sudah siap
+
 def on_connect_sensor(client, userdata, flags, rc, properties=None):
-    # Fungsi _default_on_connect di mqtt_utils akan menangani print dasar dan publish LWT online
-    if rc == 0:
-        print(f"Sensor ({CLIENT_ID}): Connected logic specific to sensor.")
-        # Sensor ini mungkin tidak perlu subscribe ke apapun secara default,
-        # kecuali jika ia mengharapkan response pada topic yang tetap.
-        # Jika response topic dibuat dinamis, subscribe dilakukan saat publish request.
-    # else case sudah dihandle oleh _default_on_connect di mqtt_utils
+    global is_connected_flag
+    if rc == 0: # Koneksi berhasil
+        is_connected_flag = True
+        print(f"Sensor ({CLIENT_ID}): Custom on_connect. Connection logic activated. Ready to publish.")
+    # _default_on_connect di mqtt_utils akan menghandle print detail koneksi dan publish LWT online
 
 def on_message_sensor(client, userdata, msg):
-    # Sensor ini akan menerima pesan jika ia subscribe ke topic response
+    # Dipanggil jika sensor subscribe ke topic response dan menerima balasan
+    global active_sensor_requests
     try:
         topic = msg.topic
-        decoded_payload = msg.payload.decode()
-        print(f"\nSensor ({CLIENT_ID}) Received message on '{topic}': {decoded_payload}")
+        decoded_payload = ""
+        try:
+            decoded_payload = msg.payload.decode('utf-8')
+        except UnicodeDecodeError:
+            print(f"Sensor ({CLIENT_ID}) Warning: Could not decode response payload as UTF-8 on topic '{topic}'.")
+            return
 
-        if msg.properties:
-            print("  Message Properties:")
-            props_dict = vars(msg.properties)
-            for prop_name, prop_value in props_dict.items():
-                if prop_value is not None and prop_name != "names":
-                    if prop_name == "CorrelationData" and isinstance(prop_value, bytes):
-                        print(f"    {prop_name}: {prop_value.decode('utf-8', errors='ignore')}")
-                    # ... (print properti lain jika perlu) ...
+        print(f"\nSensor ({CLIENT_ID}) Received RESPONSE on '{topic}': {decoded_payload}")
 
+        # Ambil CorrelationData dari properties pesan masuk
         correlation_id_resp = None
         if msg.properties and hasattr(msg.properties, 'CorrelationData'):
-            correlation_id_resp = msg.properties.CorrelationData.decode('utf-8', errors='ignore')
+            correlation_id_resp = msg.properties.CorrelationData.decode('utf-8', errors='replace')
         
         if correlation_id_resp and correlation_id_resp in active_sensor_requests:
             request_details = active_sensor_requests.pop(correlation_id_resp) # Hapus setelah diproses
             print(f"  [RESPONSE MATCHED] For Temperature Data Request with Correlation ID: {correlation_id_resp}")
             try:
                 response_data = json.loads(decoded_payload)
-                print(f"  Parsed Response Data: {response_data}")
+                print(f"  Parsed Response Data from Panel/Subscriber: {response_data}")
+                # Lakukan sesuatu dengan response_data jika perlu
             except json.JSONDecodeError:
-                print(f"  Response Data (Raw): {decoded_payload}")
+                print(f"  Response Data is not JSON (Raw): {decoded_payload}")
             
-            # Unsubscribe dari topic response yang spesifik ini
-            client.unsubscribe(request_details['response_topic'])
-            print(f"  Unsubscribed from response topic: {request_details['response_topic']}")
+            # Unsubscribe dari topic response yang dinamis ini
+            if client.is_connected(): # Pastikan masih konek sebelum unsubscribe
+                client.unsubscribe(request_details['response_topic'])
+                print(f"  Unsubscribed from dynamic response topic: {request_details['response_topic']}")
         else:
-            print(f"  Message on topic '{topic}' was not a recognized response for this sensor.")
+            print(f"  Message on topic '{topic}' was not a recognized response for this sensor or correlation ID mismatch.")
 
     except Exception as e:
-        print(f"Sensor ({CLIENT_ID}) Error processing message from topic '{msg.topic}': {e}")
+        print(f"Sensor ({CLIENT_ID}) Error processing message from topic '{topic}': {e}")
 
 
-def on_publish_sensor(client, userdata, mid, properties=None): # Tambah properties
-    print(f"Sensor ({CLIENT_ID}) Message Published (mid: {mid})")
+def on_publish_sensor(client, userdata, mid, properties=None):
+    # Callback ini dipanggil setelah konfirmasi dari broker (untuk QoS > 0)
+    print(f"Sensor ({CLIENT_ID}) Message Published (mid: {mid}) - Confirmed by broker (for QoS > 0).")
 
-def on_disconnect_sensor(client, userdata, rc, properties=None): # Tambah properties
+def on_disconnect_sensor(client, userdata, rc, properties=None):
+    global is_connected_flag
+    is_connected_flag = False # Reset flag saat disconnect
     print(f"Sensor ({CLIENT_ID}) Disconnected from MQTT Broker (rc: {rc}).")
-    if properties:
-        print(f"  Broker DISCONNECT Properties: {vars(properties)}")
-
+    # Jika rc != 0, mungkin ada masalah dan bisa coba reconnect di sini (logika lebih lanjut)
 
 def run_sensor():
-    # Membuat client menggunakan mqtt_utils
+    global is_connected_flag
+    is_connected_flag = False # Pastikan flag false di awal
+
     client = create_mqtt_client(
         client_id=CLIENT_ID,
         on_connect_custom=on_connect_sensor,
-        on_message_custom=on_message_sensor, # Dibutuhkan jika sensor mengharapkan response
+        on_message_custom=on_message_sensor, # Untuk menerima response
         on_publish_custom=on_publish_sensor,
         on_disconnect_custom=on_disconnect_sensor,
         lwt_topic=SENSOR_LWT_TOPIC,
-        lwt_payload_online=SENSOR_LWT_PAYLOAD_ONLINE,
-        lwt_payload_offline=SENSOR_LWT_PAYLOAD_OFFLINE_UNEXPECTED,
+        lwt_payload_online=SENSOR_LWT_PAYLOAD_ONLINE_str,
+        lwt_payload_offline=SENSOR_LWT_PAYLOAD_OFFLINE_UNEXPECTED_str,
         lwt_qos=LWT_QOS_SENSOR,
         lwt_retain=LWT_RETAIN_SENSOR
     )
-
     if not client:
-        print(f"Sensor ({CLIENT_ID}): Failed to create or connect MQTT client. Exiting.")
+        print(f"Sensor ({CLIENT_ID}): Failed to create MQTT client from utils. Exiting.")
         return
 
-    client.loop_start() # Memulai thread network loop di background
-    print(f"Sensor ({CLIENT_ID}) started. Publishing data. Press Ctrl+C to exit.")
-    print("-" * 30)
+    client.loop_start() # Penting untuk memproses callback dan network traffic
+    print(f"Sensor ({CLIENT_ID}) started. Waiting for connection to be ready...")
+    
+    # Tunggu hingga koneksi benar-benar siap (flag di-set oleh on_connect_sensor)
+    connection_timeout_seconds = 20 # Beri waktu lebih jika koneksi lambat
+    start_wait_time = time.time()
+    while not is_connected_flag and (time.time() - start_wait_time < connection_timeout_seconds):
+        time.sleep(0.2) # Cek setiap 0.2 detik
+    
+    if not is_connected_flag:
+        print(f"ERROR ({CLIENT_ID}): Failed to establish connection within {connection_timeout_seconds}s timeout. Exiting.")
+        # Panggil disconnect_client dengan argumen yang benar
+        disconnect_client(client, SENSOR_LWT_TOPIC, None, LWT_QOS_SENSOR, LWT_RETAIN_SENSOR, reason_string=f"Sensor {CLIENT_ID} connection timeout")
+        return
 
+    print(f"Sensor ({CLIENT_ID}) Connection ready. Publishing data...")
+    print("-" * 30)
     msg_count = 0
-    publish_interval = 5 # Detik
+    publish_interval = GLOBAL_SETTINGS.get("sensor_publish_interval", 5) # Ambil dari config jika ada, atau default 5 detik
     try:
         while True:
+            if not is_connected_flag: # Jika koneksi putus di tengah jalan
+                print(f"WARNING ({CLIENT_ID}): Connection lost. Pausing publish attempts. Paho-MQTT should be attempting to reconnect.")
+                time.sleep(publish_interval) # Tunggu dan biarkan loop Paho mencoba reconnect
+                continue # Coba lagi di iterasi berikutnya
+
             msg_count += 1
             current_timestamp = time.time()
-            temperature_value = round(random.uniform(20.0, 35.0), 2)
+            temperature_value = round(random.uniform(15.0, 38.0), 1) # Rentang suhu sedikit diubah
             
             # Payload data suhu
-            temp_payload_dict = {
-                "count": msg_count, 
-                "temperature": temperature_value, 
-                "unit": "C", 
-                "client_id": CLIENT_ID, 
-                "timestamp": current_timestamp
-            }
+            temp_payload_dict = {"count": msg_count, "temperature": temperature_value, "unit": "C", "client_id": CLIENT_ID, "timestamp": current_timestamp}
             temp_payload_json = json.dumps(temp_payload_dict)
-
-            # --- Properti untuk publish data suhu ---
-            temp_pub_props = Properties(PacketTypes.PUBLISH)
-            temp_pub_props.ContentType = "application/json"
-            temp_pub_props.UserProperty = [("sensor_type", "DHT22_simulated"), ("location", "lab_A")]
             
-            # Message Expiry untuk data sensor
-            if DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA is not None and int(DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA) > 0:
-                temp_pub_props.MessageExpiryInterval = int(DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA)
+            # Properti untuk pesan suhu
+            correlation_id_temp_req = None
+            response_topic_temp_req = None
+            user_props_temp = [("sensor_model", "VirtualThermo 2000"), ("location_grid", "A4")]
+            content_type_temp = "application/json"
+            # Message Expiry akan diambil dari DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA oleh publish_message
 
-            # --- Pola Request/Response untuk data suhu ---
-            correlation_id_temp = None
-            response_topic_for_temp = None
             if TEMPERATURE_RESPONSE_BASE: # Jika sensor ingin mengirim data suhu sebagai request
-                correlation_id_temp = str(uuid.uuid4())
-                response_topic_for_temp = f"{TEMPERATURE_RESPONSE_BASE}{correlation_id_temp}"
-                
-                temp_pub_props.ResponseTopic = response_topic_for_temp
-                temp_pub_props.CorrelationData = correlation_id_temp.encode('utf-8')
-                
-                # Simpan detail request
-                active_sensor_requests[correlation_id_temp] = {
-                    'response_topic': response_topic_for_temp,
-                    'timestamp': current_timestamp
-                }
-                # Subscribe ke topic response yang baru dibuat (QoS untuk response bisa 0 atau 1)
-                # Gunakan mqtt_utils.subscribe_to_topics jika perlu properties saat subscribe
-                # Untuk sederhana, client.subscribe langsung
-                (res_sub, mid_sub) = client.subscribe([(response_topic_for_temp, 1)])
-                if res_sub == mqtt.MQTT_ERR_SUCCESS:
-                     print(f"  Sensor ({CLIENT_ID}) Subscribed to '{response_topic_for_temp}' for temperature response (MID: {mid_sub}).")
-                else:
-                     print(f"  Sensor ({CLIENT_ID}) FAILED to subscribe to response topic '{response_topic_for_temp}' (Error: {res_sub}).")
-
-
+                correlation_id_temp_req = str(uuid.uuid4())
+                response_topic_temp_req = f"{TEMPERATURE_RESPONSE_BASE}{correlation_id_temp_req}"
+                active_sensor_requests[correlation_id_temp_req] = {'response_topic': response_topic_temp_req, 'timestamp': current_timestamp}
+                if client.is_connected():
+                    (res_sub, mid_sub) = client.subscribe([(response_topic_temp_req, 1)]) # QoS untuk subscribe response
+                    if res_sub == mqtt.MQTT_ERR_SUCCESS:
+                         print(f"  Sensor ({CLIENT_ID}) Subscribed to '{response_topic_temp_req}' for temp response (MID: {mid_sub}).")
+                    else:
+                         print(f"  Sensor ({CLIENT_ID}) FAILED to subscribe to response topic '{response_topic_temp_req}' (Error: {res_sub}).")
+            
             print(f"\nSensor ({CLIENT_ID}) Publishing Temperature (Msg #{msg_count}) to '{TEMPERATURE_TOPIC_DATA}'")
             result_temp = publish_message(
                 client,
-                TEMPERATURE_TOPIC_DATA,
-                temp_payload_json,
+                topic=TEMPERATURE_TOPIC_DATA,
+                payload=temp_payload_json,
                 qos=DEFAULT_QOS_SENSOR,
-                # retain=False, # Data sensor biasanya tidak di-retain
-                message_expiry_interval=temp_pub_props.MessageExpiryInterval,
-                response_topic=temp_pub_props.ResponseTopic,
-                correlation_data=temp_pub_props.CorrelationData,
-                user_properties=temp_pub_props.UserProperty,
-                content_type=temp_pub_props.ContentType
+                # retain=False, # Data sensor biasanya tidak di-retain kecuali ada kebutuhan khusus
+                message_expiry_interval=DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA, # Bisa juga di-override per pesan
+                response_topic=response_topic_temp_req,
+                correlation_data=correlation_id_temp_req.encode('utf-8') if correlation_id_temp_req else None,
+                user_properties=user_props_temp,
+                content_type=content_type_temp
             )
             
-            if result_temp and result_temp.rc == mqtt.MQTT_ERR_SUCCESS:
-                print(f"  Temperature (mid: {result_temp.mid}) enqueued for publishing.")
-                if correlation_id_temp:
-                    print(f"  Expecting response with Correlation ID: {correlation_id_temp}")
-            else:
-                err_code_temp = result_temp.rc if result_temp else "N/A (Publish failed)"
+            if not (result_temp and result_temp.rc == mqtt.MQTT_ERR_SUCCESS):
+                err_code_temp = result_temp.rc if result_temp else "N/A (Publish Failed)"
                 print(f"  Failed to enqueue temperature message (Error: {err_code_temp})")
                 # Cleanup jika publish request gagal
-                if correlation_id_temp and correlation_id_temp in active_sensor_requests:
-                    del active_sensor_requests[correlation_id_temp]
-                    if response_topic_for_temp: client.unsubscribe(response_topic_for_temp)
-            
-            # --- Publikasi Data Kelembaban (jika ada) ---
+                if correlation_id_temp_req and correlation_id_temp_req in active_sensor_requests:
+                    del active_sensor_requests[correlation_id_temp_req]
+                    if response_topic_temp_req and client.is_connected(): client.unsubscribe(response_topic_temp_req)
+            elif result_temp and correlation_id_temp_req: # Jika publish sukses dan ini adalah request
+                print(f"  Temperature (mid: {result_temp.mid}) enqueued as REQUEST. Expecting response with Correlation ID: {correlation_id_temp_req}")
+            elif result_temp: # Publish sukses tapi bukan request
+                 print(f"  Temperature (mid: {result_temp.mid}) enqueued for publishing.")
+
+
+            # Publikasi Data Kelembaban (jika topik dikonfigurasi)
             if HUMIDITY_TOPIC_DATA:
-                humidity_value = round(random.uniform(40.0, 70.0), 1)
-                hum_payload_dict = {
-                    "count": msg_count, 
-                    "humidity": humidity_value, 
-                    "unit": "%RH", 
-                    "client_id": CLIENT_ID, 
-                    "timestamp": current_timestamp
-                }
+                humidity_value = round(random.uniform(30.0, 75.0), 1) # Rentang humidity
+                hum_payload_dict = {"count": msg_count, "humidity": humidity_value, "unit": "%RH", "client_id": CLIENT_ID, "timestamp": current_timestamp}
                 hum_payload_json = json.dumps(hum_payload_dict)
                 
-                # Properti untuk publish data kelembaban (bisa sama atau beda dengan suhu)
-                hum_pub_props = Properties(PacketTypes.PUBLISH)
-                hum_pub_props.ContentType = "application/json"
-                # hum_pub_props.UserProperty = [("sensor_type", "AM2302_simulated")]
-                if DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA is not None and int(DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA) > 0:
-                    hum_pub_props.MessageExpiryInterval = int(DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA)
-
                 print(f"Sensor ({CLIENT_ID}) Publishing Humidity (Msg #{msg_count}) to '{HUMIDITY_TOPIC_DATA}'")
                 result_hum = publish_message(
                     client,
-                    HUMIDITY_TOPIC_DATA,
-                    hum_payload_json,
+                    topic=HUMIDITY_TOPIC_DATA,
+                    payload=hum_payload_json,
                     qos=DEFAULT_QOS_SENSOR,
-                    message_expiry_interval=hum_pub_props.MessageExpiryInterval,
-                    # Tidak ada request/response untuk humidity di contoh ini
-                    user_properties=hum_pub_props.UserProperty,
-                    content_type=hum_pub_props.ContentType
+                    message_expiry_interval=DEFAULT_MESSAGE_EXPIRY_SENSOR_DATA,
+                    user_properties=[("sensor_model", "VirtualHygro 100")],
+                    content_type="application/json"
                 )
                 if result_hum and result_hum.rc == mqtt.MQTT_ERR_SUCCESS:
                      print(f"  Humidity (mid: {result_hum.mid}) enqueued for publishing.")
                 else:
-                     err_code_hum = result_hum.rc if result_hum else "N/A (Publish failed)"
+                     err_code_hum = result_hum.rc if result_hum else "N/A (Publish Failed)"
                      print(f"  Failed to enqueue humidity message (Error: {err_code_hum})")
 
             time.sleep(publish_interval)
@@ -281,29 +257,27 @@ def run_sensor():
     finally:
         print("-" * 30)
         # Cleanup subscriptions untuk response yang mungkin masih aktif
-        if client and client.is_connected(): # Pastikan client ada dan terhubung
-            for corr_id, details in list(active_sensor_requests.items()):
-                print(f"  Cleaning up subscription for pending response: {details['response_topic']}")
-                client.unsubscribe(details['response_topic'])
-
-        # Saat disconnect normal (Ctrl+C), publish status "offline_graceful"
-        if SENSOR_LWT_TOPIC and client and client.is_connected() and SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL:
-            print(f"Sensor ({CLIENT_ID}) Publishing 'offline_graceful' status to '{SENSOR_LWT_TOPIC}'...")
-            # Update timestamp untuk payload graceful offline
-            payload_graceful_offline_updated = json.loads(SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL)
-            payload_graceful_offline_updated["timestamp"] = time.time()
-            
-            publish_message(
-                client,
-                SENSOR_LWT_TOPIC,
-                json.dumps(payload_graceful_offline_updated),
-                qos=LWT_QOS_SENSOR,
-                retain=LWT_RETAIN_SENSOR
-            )
-            time.sleep(0.5) # Beri sedikit waktu agar pesan terkirim
-
-        # Menggunakan disconnect_client dari mqtt_utils
-        disconnect_client(client, reason_string=f"Sensor {CLIENT_ID} normal shutdown")
+        if client and hasattr(client, 'is_connected') and client.is_connected():
+            for corr_id, details in list(active_sensor_requests.items()): # Salin list untuk iterasi aman saat menghapus
+                if client.is_connected(): # Cek lagi sebelum unsubscribe
+                    print(f"  Cleaning up sensor's subscription for pending response: {details['response_topic']}")
+                    client.unsubscribe(details['response_topic'])
+        
+        # Siapkan payload untuk LWT offline graceful
+        payload_graceful_offline_final_str = None
+        if SENSOR_LWT_TOPIC and SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL_template: # Pastikan template ada
+            temp_payload_offline = dict(SENSOR_LWT_PAYLOAD_OFFLINE_GRACEFUL_template) # Buat salinan
+            temp_payload_offline["timestamp"] = time.time() # Update timestamp
+            payload_graceful_offline_final_str = json.dumps(temp_payload_offline)
+        
+        disconnect_client(
+            client,
+            lwt_topic=SENSOR_LWT_TOPIC,
+            lwt_payload_offline_graceful=payload_graceful_offline_final_str,
+            lwt_qos=LWT_QOS_SENSOR,
+            lwt_retain=LWT_RETAIN_SENSOR,
+            reason_string=f"Sensor {CLIENT_ID} normal shutdown"
+        )
         print(f"Sensor ({CLIENT_ID}) Disconnected by mqtt_utils.")
 
 if __name__ == '__main__':

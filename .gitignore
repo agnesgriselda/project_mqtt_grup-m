@@ -1,122 +1,27 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-# Обычно эти файлы игнорируются PyInstaller bundle частью вашего проекта
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-*.po
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# PEP 582; __pypackages__
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
+*.py[cod]
 
 # Environments
 .env
-.venv
-env/
+.env.*
+!.env.example
 venv/
-ENV/
-env.bak/
-venv.bak/
+.venv/
+.vscode/ 
+# IDE / Editor (jika ada file yang tidak perlu)
+# .vscode/ # Kamu bisa putuskan apakah settings.json di sini mau di-commit atau tidak
+# .idea/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# OS generated files
+.DS_Store
+Thumbs.db
 
-# Rope project settings
-.ropeproject
+# Log files (jika kamu membuat file log sendiri)
+# *.log
+# logs/
 
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
+# Kunci Privat (JIKA kamu menyimpannya di dalam folder proyek Git)
+# *.key
+# certs/myca.key
+# certs/mosquitto_server.key
