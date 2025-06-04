@@ -27,22 +27,23 @@ Sistem ini dirancang untuk menyediakan fungsionalitas berikut secara aman dan an
 
 ---
 
-### Fitur MQTT yang Diimplementasikan:
+### Fitur MQTT yang Diimplementasikan (Ringkasan):
 
 *   **Protokol MQTT Versi 5.0** beserta fitur-fitur spesifiknya.
 *   **Pola Publish-Subscribe** sebagai dasar komunikasi.
-*   **Quality of Service (QoS):** Penggunaan QoS level 0, 1, dan 2 (default dikonfigurasi untuk QoS tinggi, misal QoS 1 atau 2 untuk data penting dan perintah).
-*   **Retained Messages:** Digunakan untuk memastikan status terakhir perangkat (misalnya, status lampu ON/OFF, status konektivitas "online") langsung tersedia bagi klien yang baru terhubung.
-*   **Last Will and Testament (LWT):** Setiap perangkat (sensor, lampu, panel) mendaftarkan LWT untuk memberitahukan status "offline_unexpected" jika koneksi terputus secara tidak normal. Status "online" dan "offline_graceful" juga dipublikasikan ke topik LWT.
-*   **MQTT Secure (TLS/SSL):** Enkripsi end-to-end antara klien dan broker MQTT lokal menggunakan sertifikat self-signed untuk lingkungan pengembangan.
-*   **Authentication:** Klien diwajibkan menggunakan username dan password untuk terhubung ke broker MQTT lokal.
+*   **Quality of Service (QoS):** Penggunaan QoS level 0, 1, dan 2.
+*   **Retained Messages:** Untuk status perangkat yang persisten.
+*   **Last Will and Testament (LWT):** Untuk deteksi koneksi tak terduga.
+*   **MQTT Secure (MQTTS - TLS/SSL):** Enkripsi end-to-end.
+*   **Authentication:** Username dan password untuk koneksi klien.
 *   **MQTT 5.0 Properties:**
-    *   **Message Expiry Interval:** Pesan dapat dikonfigurasi untuk kadaluarsa setelah periode tertentu jika tidak terkirim ke subscriber.
-    *   **Request/Response Pattern:** Diimplementasikan menggunakan properti `ResponseTopic` dan `CorrelationData` untuk komunikasi dua arah yang lebih sinkron antara sensor-panel dan panel-lampu.
-    *   **User Properties:** Digunakan untuk mengirim metadata tambahan bersama pesan (misalnya, tipe sensor, sumber perintah).
-    *   **Content Type:** Menandakan tipe payload (misalnya, `application/json`).
-    *   **Reason Code & Reason String (on Disconnect):** Memberikan informasi lebih detail saat klien disconnect.
-*   **Modularitas Kode:** Penggunaan `common/mqtt_utils.py` untuk abstraksi logika koneksi dan publish/subscribe MQTT.
+    *   **Message Expiry Interval:** Kadaluarsa pesan.
+    *   **Request/Response Pattern:** Komunikasi dua arah sinkron.
+    *   **User Properties:** Metadata tambahan.
+    *   **Content Type:** Tipe payload.
+    *   **Reason Code & Reason String:** Info detail saat disconnect/operasi lain.
+    *   **Receive Maximum (Flow Control):** Mengatur aliran pesan dari broker.
+*   **Modularitas Kode:** Logika MQTT terpusat di `common/mqtt_utils.py`.
 
 ---
 
@@ -116,34 +117,32 @@ Proyek ini dirancang untuk berjalan dengan broker Mosquitto lokal yang diamankan
 
 *   **Instal Mosquitto:** Ikuti panduan instalasi Mosquitto untuk OS-mu.
 *   **Buat Sertifikat Self-Signed (jika belum ada):**
-    1.  Gunakan OpenSSL untuk membuat CA pribadi (`myca.key`, `myca.pem`) dan sertifikat server (`mosquitto_server.key`, `mosquitto_server.crt` yang ditandatangani oleh `myca.pem` dengan **Common Name `localhost`**). Simpan file-file ini di direktori yang aman di luar folder proyek ini (misalnya, di direktori instalasi Mosquitto).
+    1.  Gunakan OpenSSL untuk membuat CA pribadi (`myca.key`, `myca.pem`) dan sertifikat server (`mosquitto_server.key`, `mosquitto_server.crt` yang ditandatangani oleh `myca.pem` dengan **Common Name `localhost`**). Simpan file-file ini di direktori yang aman di luar folder proyek ini (misalnya, di direktori instalasi Mosquitto). Panduan detail pembuatan sertifikat dapat ditemukan di berbagai tutorial OpenSSL.
     2.  **Salin `myca.pem` (sertifikat publik CA) ke folder `certs/` di dalam proyek Python ini.**
 *   **Buat File Password Mosquitto:**
     ```bash
-    # Navigasi ke direktori instalasi Mosquitto (misal D:\mosquitto)
+    # Navigasi ke direktori instalasi Mosquitto
     # Ganti user_mqtt_kita dan passwordnya sesuai keinginan
     mosquitto_passwd -c pwfile user_mqtt_kita 
     ```
 *   **Konfigurasi `mosquitto.conf`:**
-    Pastikan file `mosquitto.conf` (biasanya di direktori instalasi Mosquitto) berisi:
+    Pastikan file `mosquitto.conf` (biasanya di direktori instalasi Mosquitto) berisi (sesuaikan path):
     ```conf
     allow_anonymous false
-    password_file D:/path/ke/pwfile # Sesuaikan path dan nama file password
-
-    # listener 1883 # Opsional, untuk koneksi tanpa TLS jika diperlukan
+    password_file /path/to/your/pwfile # Ganti dengan path absolut pwfile Anda
 
     listener 8883
     protocol mqtt
-    cafile D:/path/ke/certs_local/myca.pem
-    certfile D:/path/ke/certs_local/mosquitto_server.crt
-    keyfile D:/path/ke/certs_local/mosquitto_server.key
+    cafile /path/to/your/certs_local/myca.pem     # Path absolut ke myca.pem di sisi broker
+    certfile /path/to/your/certs_local/mosquitto_server.crt # Path absolut
+    keyfile /path/to/your/certs_local/mosquitto_server.key  # Path absolut
     require_certificate false 
     ```
-    Ganti `D:/path/ke/` dengan path absolut yang benar ke file-file tersebut di sistemmu.
+    Ganti `/path/to/your/` dengan path absolut yang benar ke file-file tersebut di sistemmu.
 
 ### 5. Konfigurasi Proyek Python
 
-Edit file `config/settings.json` di dalam proyek Python. Pastikan konfigurasinya sesuai untuk koneksi ke broker lokalmu dengan Auth + TLS:
+Edit file `config/settings.json` di dalam proyek Python.
 ```json
 {
     "broker_address": "localhost",
@@ -162,16 +161,19 @@ Edit file `config/settings.json` di dalam proyek Python. Pastikan konfigurasinya
     "default_qos": 1,
     "lwt_qos": 1,
     "lwt_retain": true,
+    "sensor_publish_interval": 5, // Interval publish sensor dalam detik
     "mqtt_advanced_settings": {
         "port_tls": 8883,
         "use_tls": true,
-        "ca_cert_path": "certs/myca.pem",
+        "ca_cert_path": "certs/myca.pem", // Path relatif dari root proyek
+        "client_cert_path": null, // Tidak digunakan jika require_certificate false di broker
+        "client_key_path": null,  // Tidak digunakan jika require_certificate false di broker
         "use_auth": true,
-        "username": "user_mqtt_kita",     
-        "password": "password_anda",      
+        "username": "user_mqtt_kita",     // Ganti dengan username Anda
+        "password": "password_anda",      // Ganti dengan password Anda
         "keepalive": 60,
         "v5_receive_maximum": 10,
-        "default_message_expiry_interval": 10 
+        "default_message_expiry_interval": 30 // Misal, pesan non-retained kadaluarsa setelah 30 detik
     },
     "panel_specific_settings": {
         "subscribed_topics_list": [ 
@@ -184,7 +186,7 @@ Edit file `config/settings.json` di dalam proyek Python. Pastikan konfigurasinya
     }
 }
 ```
-Ganti `"user_mqtt_kita"` dan `"password_anda"` dengan kredensial Mosquitto yang kamu buat. Sesuaikan nama topik jika perlu.
+Ganti `"user_mqtt_kita"` dan `"password_anda"` dengan kredensial Mosquitto yang kamu buat.
 
 ---
 
@@ -192,13 +194,18 @@ Ganti `"user_mqtt_kita"` dan `"password_anda"` dengan kredensial Mosquitto yang 
 
 > Buka **minimal 4 terminal terpisah** (1 untuk Mosquitto, 3 untuk klien Python). Pastikan virtual environment diaktifkan di terminal klien Python.
 
+Masuk ke venv dulu
+```bash
+source venv/bin/activate
+```
+
 ### 1. Terminal A: Jalankan Broker Mosquitto Lokal
 ```bash
-# Navigasi ke direktori instalasi Mosquitto (misal D:\mosquitto)
-.\mosquitto.exe -c mosquitto.conf -v 
-# (Gunakan ./mosquitto di PowerShell atau mosquitto di cmd biasa jika path sudah di environment variable)
+# Navigasi ke direktori instalasi Mosquitto
+mosquitto -c mosquitto.conf -v 
 ```
 Pastikan Mosquitto berjalan tanpa error dan listening di port 8883.
+Misalkan sudah berjalan (Error: Address already in use) jalankan `pkill mosquitto`
 
 ### 2. Terminal B: Jalankan Panel Kontrol
 ```bash
@@ -206,7 +213,6 @@ Pastikan Mosquitto berjalan tanpa error dan listening di port 8883.
 # Aktifkan venv
 python control_panel/panel_client.py
 ```
-Panel akan terhubung dan menampilkan dashboard awal.
 
 ### 3. Terminal C: Jalankan Sensor Suhu & Kelembaban
 ```bash
@@ -214,7 +220,6 @@ Panel akan terhubung dan menampilkan dashboard awal.
 # Aktifkan venv
 python sensor/sensor_client.py
 ```
-Sensor akan terhubung, mengirim status "online", dan mulai mempublikasikan data. Panel akan menampilkan update.
 
 ### 4. Terminal D: Jalankan Lampu Pintar
 ```bash
@@ -222,24 +227,99 @@ Sensor akan terhubung, mengirim status "online", dan mulai mempublikasikan data.
 # Aktifkan venv
 python lamp/lamp_client.py
 ```
-Lampu akan terhubung, mengirim status "online", mengirim status ON/OFF awalnya, dan menunggu perintah. Panel akan menampilkan update.
-
+Jalankan (ON/OFF/TOGGLE/INVALID/EXIT) pada terminal Dashboard (panel)
 ---
 
-### Interaksi dan Pengujian Fitur
+## Demonstrasi Fitur MQTT Secara Detail
 
-*   **Kontrol Lampu:** Di terminal **Panel Kontrol**, ketik `ON`, `OFF`, `TOGGLE` untuk mengendalikan lampu. Coba juga kirim perintah tidak valid seperti `INVALIDCMD` untuk melihat respons error dari lampu.
-*   **Data Sensor:** Amati panel menerima data suhu dan kelembaban dari sensor.
-*   **Request/Response:** Perhatikan log di sensor dan panel yang menunjukkan pengiriman data suhu sebagai request dan penerimaan acknowledgment. Perhatikan juga log di panel dan lampu saat mengirim perintah lampu dan menerima konfirmasi atau error.
-*   **Message Expiry:**
-    1.  Hentikan panel.
-    2.  Biarkan sensor mengirim beberapa pesan (dengan expiry sesuai `default_message_expiry_interval`). Hentikan sensor.
-    3.  Tunggu lebih lama dari interval expiry tersebut.
-    4.  Jalankan panel lagi. Panel **tidak** boleh menerima data suhu lama.
-*   **Last Will and Testament (LWT):**
-    *   **Crash Test:** Tutup paksa terminal sensor atau lampu (jangan pakai Ctrl+C). Panel akan menerima pesan LWT `status: "offline_unexpected"`.
-    *   **Normal Shutdown:** Hentikan sensor atau lampu dengan `Ctrl+C`. Panel akan menerima pesan `status: "offline_graceful"`.
-*   **Keamanan:** Semua komunikasi ini sekarang berjalan melalui koneksi TLS terenkripsi dan memerlukan autentikasi.
+Berikut adalah cara untuk mendemonstrasikan berbagai fitur MQTT yang telah diimplementasikan dalam proyek ini:
+
+1.  **`mqtt` (Komunikasi Dasar Publish-Subscribe)**
+    *   **Implementasi**: Seluruh proyek menggunakan pola publish-subscribe melalui `common/mqtt_utils.py`. Sensor mempublikasikan data, lampu mempublikasikan status, dan panel mempublikasikan perintah serta men-subscribe ke data dan status.
+    *   **Demonstrasi**:
+        1.  Jalankan semua komponen (Broker, Panel, Sensor, Lampu).
+        2.  Amati log di terminal Sensor: `Sensor (...) Publishing Temperature...` dan `Sensor (...) Publishing Humidity...`.
+        3.  Amati log di terminal Panel: `[MESSAGE] Panel (...) received on 'iot/project/temperature_m5_test'...` dan `[MESSAGE] Panel (...) received on 'iot/project/humidity_data_m5'...`.
+        4.  Amati log di terminal Lampu saat dinyalakan/dimatikan oleh Panel: `Lamp (...) Regular Status Published...`. Panel akan menerima status ini.
+
+2.  **`mqtts` (MQTT Secure dengan TLS/SSL)**
+    *   **Implementasi**: Di `config/settings.json`, `"use_tls": true` dan `"port_tls": 8883` mengarahkan `common/mqtt_utils.py` untuk menggunakan `client.tls_set()` dengan `ca_cert_path` yang disediakan. Broker Mosquitto juga dikonfigurasi untuk listener 8883 dengan sertifikat.
+    *   **Demonstrasi**:
+        1.  Pastikan broker Mosquitto berjalan dengan konfigurasi TLS (listener 8883, `cafile`, `certfile`, `keyfile`).
+        2.  Semua klien Python (Panel, Sensor, Lampu) akan terhubung ke port 8883. Komunikasi secara otomatis dienkripsi.
+        3.  **Uji Negatif**: Coba ubah `ca_cert_path` di `settings.json` ke file yang salah atau hapus `certs/myca.pem`. Klien akan gagal terhubung karena tidak dapat memverifikasi sertifikat server (error TLS handshake akan muncul di log klien). Atau, jika broker diset `require_certificate true` dan klien tidak menyediakan sertifikat klien yang valid, koneksi juga gagal.
+
+3.  **`authentication` (Autentikasi Username/Password)**
+    *   **Implementasi**: Di `config/settings.json`, `"use_auth": true` bersama dengan `"username"` dan `"password"` digunakan oleh `common/mqtt_utils.py` (`client.username_pw_set()`). Broker Mosquitto dikonfigurasi dengan `allow_anonymous false` dan `password_file`.
+    *   **Demonstrasi**:
+        1.  Pastikan broker berjalan dengan `allow_anonymous false` dan `password_file` yang benar.
+        2.  Semua klien Python akan menggunakan username/password dari `settings.json` untuk terhubung.
+        3.  **Uji Negatif**: Ubah `"password"` di `settings.json` menjadi salah. Jalankan salah satu klien (misal, `sensor_client.py`). Klien akan gagal terhubung, dan log klien akan menunjukkan `Connection failed (RC: 4)` (Bad username or password) atau `RC: 5` (Not authorised). Log Mosquitto juga akan menunjukkan upaya koneksi yang gagal karena autentikasi.
+
+4.  **`QoS 0,1,2` (Quality of Service)**
+
+    *   **Implementasi**: `common/mqtt_utils.py` memungkinkan pengaturan QoS untuk publish dan LWT. Konfigurasi default (`"default_qos": 1`, `"lwt_qos": 1`) ada di `settings.json`.
+    QoS 0: Maksimal kirim 1 kali
+    QoS 1 : Minimal kirim 1 kali
+    QoS 2 : Kirim 1 kali saja
+    *   **Demonstrasi**:
+        *   **QoS 1 (Default)**: Pesan LWT, status lampu, data sensor, dan perintah lampu dikirim dengan QoS 1. Ini menjamin pesan setidaknya sampai satu kali. Anda dapat mengamati log broker (dengan level verbose) untuk melihat `PUBACK` dari klien ke broker (untuk publish klien) atau dari broker ke klien (untuk pesan yang diterima klien).
+        *   **Mengubah QoS**:
+            1.  Ubah `"default_qos"` di `config/settings.json` menjadi `0` atau `2`.
+            2.  Restart klien.
+            3.  **Untuk QoS 0**: Pengiriman lebih cepat, tidak ada `PUBACK`. Kehilangan pesan mungkin terjadi jika jaringan tidak stabil (sulit disimulasikan di localhost).
+            4.  **Untuk QoS 2**: Pengiriman paling andal. Amati log broker (verbose) untuk melihat handshake 4 tahap: `PUBLISH` (dari pengirim), `PUBREC` (dari penerima), `PUBREL` (dari pengirim), `PUBCOMP` (dari penerima). Ini memastikan pesan diterima tepat satu kali.
+
+5.  **`retained msg` (Retained Messages)**
+    *   **Implementasi**:
+        *   `lamp_client.py`: `publish_regular_lamp_status_v5` mempublikasikan status lampu (ON/OFF) dengan `retain=True`.
+        *   `common/mqtt_utils.py`: LWT dipublikasikan dengan `retain=True` (dari `"lwt_retain": true` di `settings.json`), sehingga status konektivitas "online" juga di-retain.
+    *   **Demonstrasi**:
+        1.  Jalankan Broker, Sensor, dan Lampu. Biarkan mereka mempublikasikan status "online" dan status lampu.
+        2.  Hentikan Panel Kontrol.
+        3.  Hentikan Sensor dan Lampu.
+        4.  Tunggu beberapa detik.
+        5.  Jalankan kembali Panel Kontrol. Panel akan **langsung** menampilkan status konektivitas terakhir dari Sensor dan Lampu (misalnya, "OFFLINE_GRACEFUL" atau "ONLINE" jika masih di-retain dari sesi sebelumnya dan tidak dioverwrite LWT) dan status terakhir lampu (misalnya, "ON" atau "OFF"). Ini karena pesan tersebut disimpan oleh broker.
+
+6.  **`expiry` (Message Expiry Interval - MQTT 5.0)**
+    *   **Implementasi**: Properti `MessageExpiryInterval` diatur di `common/mqtt_utils.py` untuk pesan yang dipublikasikan, berdasarkan `"default_message_expiry_interval"` (misalnya, 30 detik) di `config/settings.json`.
+    *   **Demonstrasi**:
+        1.  Pastikan `"default_message_expiry_interval"` di `settings.json` diset ke nilai yang relatif singkat, misal 10 detik.
+        2.  Jalankan Broker dan Sensor. Biarkan Sensor mengirim beberapa data suhu/kelembaban.
+        3.  Hentikan Panel Kontrol (jika sedang berjalan).
+        4.  Biarkan Sensor berjalan selama ~10 detik lagi untuk mempublikasikan beberapa pesan baru, lalu hentikan Sensor.
+        5.  Tunggu lebih lama dari interval expiry (misalnya, tunggu 20-25 detik setelah Sensor dihentikan).
+        6.  Jalankan Panel Kontrol. Panel **tidak** boleh menerima data suhu/kelembaban lama yang dikirim oleh Sensor sebelum ia dihentikan dan interval expiry berlalu. Panel hanya akan menerima pesan yang masih valid atau pesan retained (seperti LWT).
+
+7.  **`request response` (Pola Request/Response - MQTT 5.0)**
+    *   **Implementasi**: Menggunakan properti `ResponseTopic` dan `CorrelationData`.
+        *   `sensor_client.py` mengirim data suhu dengan `ResponseTopic` dan `CorrelationData`. `control_panel/panel_client.py` mengirim ACK.
+        *   `control_panel/panel_client.py` mengirim perintah lampu dengan `ResponseTopic` dan `CorrelationData`. `lamp_client.py` mengirim konfirmasi/error.
+    *   **Demonstrasi**:
+        1.  Jalankan semua komponen.
+        2.  **Sensor ke Panel**: Amati log Sensor. Ia akan mencetak sesuatu seperti `Subscribed to 'iot/project/temperature/response_m5/<uuid>' for temp response`. Lalu, `Temperature (...) enqueued as REQUEST. Expecting response with Correlation ID: <uuid>`. Di log Panel, Anda akan melihat `Temperature data from <sensor_id> is a REQUEST. Sending ACK...`. Sensor kemudian akan mencetak `Received RESPONSE on 'iot/project/temperature/response_m5/<uuid>'... Parsed Response Data from Panel/Subscriber: { "status": "temperature_acknowledged_by_panel", ... }`.
+        3.  **Panel ke Lampu**: Di Panel, kirim perintah `ON`. Log Panel akan menunjukkan `Command 'ON' sent as REQUEST. Expecting response (CorrID: <uuid>...)`. Log Lampu akan menunjukkan penerimaan perintah dan pengiriman response. Log Panel kemudian akan menampilkan `[RESPONSE] For command 'ON' (CorrID: <uuid>): ... Status: SUCCESS - Lamp is now ON`. Coba kirim `INVALIDCMD` dari Panel untuk melihat respons error.
+
+8.  **`flow control` (Receive Maximum - MQTT 5.0)**
+    *   **Implementasi**: Properti `ReceiveMaximum` diatur saat koneksi klien (`common/mqtt_utils.py`) berdasarkan `"v5_receive_maximum": 10` di `config/settings.json`.
+    *   **Demonstrasi**:
+        *   Ini adalah fitur yang bekerja di latar belakang untuk mencegah klien kewalahan. Klien memberitahu broker bahwa ia hanya mau menerima maksimal 10 pesan QoS 1/2 yang belum di-acknowledge pada satu waktu.
+        *   Untuk benar-benar melihat efeknya, Anda memerlukan skenario di mana broker mengirim pesan ke satu klien dengan sangat cepat (lebih cepat dari kemampuan klien untuk memproses dan mengirim `PUBACK`). Dalam proyek ini dengan interval publish yang wajar, efeknya mungkin tidak terlihat jelas tanpa alat khusus. Namun, pengaturannya menunjukkan bahwa fitur ini aktif. Anda bisa mengamati log broker jika ia melaporkan penundaan pengiriman karena batasan `ReceiveMaximum` klien (beberapa broker mungkin memiliki log seperti itu).
+
+9.  **`ping-pong` (Keepalive untuk Deteksi Koneksi & LWT)**
+    *   **Implementasi**:
+        *   **Keepalive**: Parameter `keepalive` (misal, 60 detik) di `config/settings.json` digunakan saat `client.connect()`. Paho-MQTT secara otomatis menangani pengiriman `PINGREQ` dan pemrosesan `PINGRESP`.
+        *   **LWT (Last Will and Testament)**: Setiap klien mendaftarkan LWT (`client.will_set()`) yang berisi status `offline_unexpected`. Klien juga secara eksplisit mempublikasikan status `online` dan `offline_graceful`.
+    *   **Demonstrasi**:
+        1.  **Keepalive**:
+            *   Jalankan Broker dan salah satu klien (misal, Sensor).
+            *   Jika tidak ada traffic MQTT lain, setelah interval `keepalive` (60 detik), klien akan mengirim `PINGREQ` dan broker akan merespons dengan `PINGRESP`. Ini bisa diamati dengan packet sniffer (seperti Wireshark) yang memantau port broker, atau di log broker yang sangat verbose (beberapa konfigurasi Mosquitto dapat menampilkan ini).
+        2.  **LWT & Deteksi Putus Koneksi**:
+            *   Jalankan Broker, Panel, dan Sensor. Pastikan Sensor terhubung dan Panel menampilkan status Sensor "ONLINE".
+            *   **Crash Test (Simulasi Putus Tiba-tiba)**: Tutup paksa terminal Sensor (misalnya, menggunakan `kill` atau menutup window terminal, **jangan** Ctrl+C).
+            *   Broker tidak akan menerima `PINGREQ` atau pesan lain dari Sensor setelah `1.5 * keepalive` detik. Broker kemudian akan mempublikasikan pesan LWT Sensor.
+            *   Panel Kontrol akan menerima pesan LWT ini dan menampilkan status Sensor sebagai `OFFLINE_UNEXPECTED`.
+            *   **Normal Shutdown**: Hentikan Sensor dengan `Ctrl+C`. Sebelum disconnect, Sensor akan mempublikasikan pesan `offline_graceful` ke topik LWT-nya. Panel akan menerima ini dan menampilkan status Sensor sebagai `OFFLINE_GRACEFUL`.
 
 ---
 
@@ -285,9 +365,6 @@ Ini akan menjalankan broker di port 1884 tanpa TLS atau autentikasi.
 ```bash
 # Navigasi ke root direktori proyek
 # Aktifkan venv
-python benchmark_req_res.py responder [opsi]
-```
-Contoh untuk broker benchmark sederhana (port 1884):
 ```bash
 python benchmark_req_res.py responder --bench_broker_host localhost --bench_broker_port 1884 --request_topic "benchmark/rtt_test" --qos 1
 ```
@@ -297,9 +374,6 @@ python benchmark_req_res.py responder --bench_broker_host localhost --bench_brok
 ```bash
 # Navigasi ke root direktori proyek
 # Aktifkan venv
-python benchmark_req_res.py requester [opsi]
-```
-Contoh untuk broker benchmark sederhana (port 1884):
 ```bash
 python benchmark_req_res.py requester --bench_broker_host localhost --bench_broker_port 1884 --num_requests 100 --request_topic "benchmark/rtt_test" --qos 1 --req_payload_size 128
 ```

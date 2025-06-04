@@ -12,7 +12,7 @@
         "temperature_response_base": "iot/project/temperature/response_m5/",
         "lamp_command_response_base": "iot/project/lamp/command/response_m5/"
     },
-    "default_qos": 1,
+    "default_qos": 1, 
     "lwt_qos": 1,
     "lwt_retain": true,
     "mqtt_advanced_settings": {
@@ -23,7 +23,7 @@
         "username": "user_mqtt_kita",
         "password": "insisgrupm",
         "keepalive": 60,
-        "v5_receive_maximum": 10,
+        "v5_receive_maximum": 100,
         "default_message_expiry_interval": 10
     },
     "panel_specific_settings": {
