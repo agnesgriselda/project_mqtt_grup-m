@@ -25,6 +25,8 @@ Sistem ini dirancang untuk menyediakan fungsionalitas berikut secara aman dan an
     *   Semua komunikasi dengan broker MQTT lokal diamankan menggunakan **TLS (enkripsi)**.
     *   Koneksi klien ke broker MQTT lokal diwajibkan menggunakan **Autentikasi Username/Password**.
 
+---
+
 ### Fitur MQTT yang Diimplementasikan:
 
 *   **Protokol MQTT Versi 5.0** beserta fitur-fitur spesifiknya.
@@ -194,7 +196,7 @@ Ganti `"user_mqtt_kita"` dan `"password_anda"` dengan kredensial Mosquitto yang 
 ```bash
 # Navigasi ke direktori instalasi Mosquitto (misal D:\mosquitto)
 .\mosquitto.exe -c mosquitto.conf -v 
-# (Gunakan ./mosquitto di PowerShell atau mosquitto di cmd biasa)
+# (Gunakan ./mosquitto di PowerShell atau mosquitto di cmd biasa jika path sudah di environment variable)
 ```
 Pastikan Mosquitto berjalan tanpa error dan listening di port 8883.
 
@@ -222,6 +224,8 @@ python lamp/lamp_client.py
 ```
 Lampu akan terhubung, mengirim status "online", mengirim status ON/OFF awalnya, dan menunggu perintah. Panel akan menampilkan update.
 
+---
+
 ### Interaksi dan Pengujian Fitur
 
 *   **Kontrol Lampu:** Di terminal **Panel Kontrol**, ketik `ON`, `OFF`, `TOGGLE` untuk mengendalikan lampu. Coba juga kirim perintah tidak valid seperti `INVALIDCMD` untuk melihat respons error dari lampu.
@@ -238,62 +242,117 @@ Lampu akan terhubung, mengirim status "online", mengirim status ON/OFF awalnya, 
 *   **Keamanan:** Semua komunikasi ini sekarang berjalan melalui koneksi TLS terenkripsi dan memerlukan autentikasi.
 
 ---
----
 
 ## Benchmark: Uji Latensi Request-Response
 
 Sebuah skrip benchmark `benchmark_req_res.py` disertakan untuk menguji latensi request-response dari setup MQTT Anda. Skrip ini mensimulasikan klien *requester* yang mengirim pesan dan klien *responder* yang membalasnya, sambil mengukur waktu bolak-balik (*round-trip time* / RTT).
 
+### Tujuan Benchmark
+
+Benchmark ini dirancang untuk mengukur latensi dan throughput sistem MQTT dalam skenario request-response. Untuk pengujian performa dasar yang terisolasi, Anda dapat menjalankan instance broker Mosquitto terpisah tanpa enkripsi atau autentikasi. Skrip benchmark juga menyediakan opsi baris perintah untuk terhubung ke broker tertentu, termasuk yang menggunakan TLS dan autentikasi, jika Anda ingin menguji konfigurasi tersebut secara spesifik.
+
+### Prasyarat Benchmark
+
+*   **Broker Mosquitto Lokal Berjalan:** Anda memerlukan instance Mosquitto yang berjalan.
+*   **Lingkungan Virtual Python (venv) Aktif:** Pastikan venv proyek Anda sudah diaktifkan.
+*   **File Skrip `benchmark_req_res.py`:** Pastikan skrip ini ada di root direktori proyek.
+
 ### Cara Menjalankan Benchmark
 
-1.  **Pastikan Prasyarat Terpenuhi:**
-    *   Broker Mosquitto berjalan dengan TLS dan Autentikasi aktif sesuai dengan setup proyek.
-    *   File `config/settings.json` telah dikonfigurasi dengan benar.
-    *   Lingkungan virtual Python (venv) sudah diaktifkan.
+Anda akan memerlukan minimal 3 terminal: satu untuk broker Mosquitto (yang akan digunakan untuk benchmark), satu untuk responder, dan satu untuk requester.
 
-2.  **Terminal 1: Jalankan Klien Responder**
-    Responder akan mendengarkan request pada topik tertentu dan mengirimkan balasan.
-    ```bash
-    # Navigasi ke root direktori proyek
-    # Aktifkan venv
-    python benchmark_req_res.py responder [opsi]
-    ```
-    Contoh:
-    ```bash
-    python benchmark_req_res.py responder --qos 1 --request_topic "benchmark/rtt_test" --response_topic_base "benchmark/rtt_test_ack/" --res_payload_size 256
-    ```
+#### Terminal 1: Jalankan Broker Mosquitto (Konfigurasi Benchmark Sederhana)
 
-3.  **Terminal 2: Jalankan Klien Requester**
-    Requester akan mengirim sejumlah request yang telah dikonfigurasi dan mengukur RTT.
-    ```bash
-    # Navigasi ke root direktori proyek
-    # Aktifkan venv
-    python benchmark_req_res.py requester [opsi]
-    ```
-    Contoh:
-    ```bash
-    python benchmark_req_res.py requester --num_requests 1000 --qos 1 --request_topic "benchmark/rtt_test" --response_topic_base "benchmark/rtt_test_ack/" --req_payload_size 128 --delay 0
-    ```
+Untuk benchmark dasar tanpa TLS/Auth, buat file konfigurasi sederhana, misalnya `mosquitto_benchmark.conf`:
+```conf
+# mosquitto_benchmark.conf
+listener 1884
+allow_anonymous true
+# Optional:
+# log_type all
+# connection_messages true
+# log_timestamp true
+```
+Jalankan Mosquitto dengan konfigurasi ini:
+```bash
+# Navigasi ke direktori tempat Anda menyimpan mosquitto_benchmark.conf
+mosquitto -c mosquitto_benchmark.conf -v
+```
+Ini akan menjalankan broker di port 1884 tanpa TLS atau autentikasi.
 
-### Opsi Benchmark (berlaku untuk requester dan responder jika relevan)
+#### Terminal 2: Jalankan Klien Responder
 
-*   `role`: `requester` atau `responder`.
+```bash
+# Navigasi ke root direktori proyek
+# Aktifkan venv
+python benchmark_req_res.py responder [opsi]
+```
+Contoh untuk broker benchmark sederhana (port 1884):
+```bash
+python benchmark_req_res.py responder --bench_broker_host localhost --bench_broker_port 1884 --request_topic "benchmark/rtt_test" --qos 1
+```
+
+#### Terminal 3: Jalankan Klien Requester
+
+```bash
+# Navigasi ke root direktori proyek
+# Aktifkan venv
+python benchmark_req_res.py requester [opsi]
+```
+Contoh untuk broker benchmark sederhana (port 1884):
+```bash
+python benchmark_req_res.py requester --bench_broker_host localhost --bench_broker_port 1884 --num_requests 100 --request_topic "benchmark/rtt_test" --qos 1 --req_payload_size 128
+```
+
+**Penting:**
+*   Nilai untuk `--request_topic` harus sama persis antara responder dan requester.
+*   Jika menguji broker utama Anda yang menggunakan TLS/Auth, gunakan opsi `--bench_use_tls`, `--bench_ca_cert`, `--bench_username`, dan `--bench_password` pada skrip benchmark sesuai dengan konfigurasi `config/settings.json` Anda.
+
+### Opsi Command-Line Utama untuk `benchmark_req_res.py`
+
+*   `role`: `requester` atau `responder` (argumen posisi, wajib).
 *   `--num_requests N`: (Hanya Requester) Jumlah request yang akan dikirim (default: 100).
-*   `--req_payload_size BYTES`: Ukuran payload request dalam byte (default: 128).
-*   `--res_payload_size BYTES`: Ukuran payload response dalam byte (default: 128).
-*   `--qos LEVEL`: Level QoS MQTT (0, 1, atau 2) untuk pesan benchmark (default: 1). *Pastikan requester dan responder menggunakan QoS dan topik yang kompatibel.*
-*   `--request_topic TOPIC_PATH`: Topik untuk mengirim request (default: `benchmark/request`).
-*   `--response_topic_base TOPIC_PATH_BASE`: Topik dasar untuk response. Requester akan menambahkan ID unik (default: `benchmark/response/`).
-*   `--delay DETIK`: (Hanya Requester) Jeda dalam detik antar pengiriman request (default: 0, untuk secepat mungkin).
+*   `--req_payload_size BYTES`: (Requester) Ukuran payload request dalam byte (default: 128).
+*   `--res_payload_size BYTES`: (Responder) Ukuran payload response dalam byte (default: 128).
+*   `--qos LEVEL`: Level QoS MQTT (0, 1, atau 2) untuk pesan benchmark (default: 1).
+*   `--request_topic TOPIC_PATH`: Topik utama untuk mengirim request (default: `benchmark/request`).
+*   `--response_topic_base TOPIC_PATH_BASE`: (Requester) Topik dasar untuk response. Requester akan menambahkan ID unik (default: `benchmark/response/`).
+*   `--delay DETIK`: (Hanya Requester) Jeda dalam detik antar pengiriman request (default: 0.0).
+*   `--bench_broker_host HOST`: Alamat host broker MQTT untuk benchmark (default: `localhost`).
+*   `--bench_broker_port PORT`: Port broker MQTT untuk benchmark (default: 1884).
+*   `--bench_use_tls`: Gunakan TLS untuk koneksi benchmark. Jika digunakan, biasanya `--bench_ca_cert` juga diperlukan.
+*   `--bench_ca_cert PATH`: Path ke CA certificate untuk TLS jika `--bench_use_tls` diaktifkan.
+*   `--bench_username USER`: Username untuk autentikasi broker.
+*   `--bench_password PASS`: Password untuk autentikasi broker.
 
-### Menginterpretasikan Hasil
+### Menginterpretasikan Hasil (Output Requester)
 
-Klien requester akan menampilkan output:
-*   Jumlah request yang berhasil, *timeout*, dan gagal (error).
-*   Nilai Minimum, Maksimum, Rata-rata, dan Standar Deviasi dari Round-Trip Times (RTT) dalam milidetik (ms).
-*   Total durasi benchmark.
-*   Throughput dalam Requests Per Second (RPS).
+Setelah selesai, klien requester akan menampilkan statistik berikut:
+*   `Total requests attempted`: Jumlah total request yang coba dikirim.
+*   `Successful requests (response received)`: Jumlah request yang menerima balasan dalam batas waktu.
+*   `Timed-out requests`: Jumlah request yang tidak menerima balasan dalam `REQUEST_TIMEOUT_SECONDS`.
+*   `Publish errors`: Jumlah kegagalan saat mempublikasikan request.
+*   `Subscribe errors`: Jumlah kegagalan saat berlangganan topik balasan.
+*   Statistik RTT (Round-Trip Time) dalam milidetik (ms) untuk request yang berhasil:
+    *   Minimum RTT
+    *   Maximum RTT
+    *   Average RTT
+    *   StdDev RTT (jika lebih dari 1 RTT tercatat)
+*   `Total benchmark duration`: Total waktu pelaksanaan benchmark.
+*   `Throughput (successful requests/sec)`: Jumlah request sukses per detik.
 
-Ini memungkinkan Anda untuk mengamati bagaimana faktor-faktor seperti level QoS, ukuran payload, dan kondisi jaringan memengaruhi latensi komunikasi MQTT di lingkungan spesifik Anda. Perlu dicatat bahwa benchmark ini mengukur latensi melalui broker MQTT lokal Anda.
+Statistik ini memungkinkan Anda untuk mengamati bagaimana faktor-faktor seperti level QoS, ukuran payload, konfigurasi broker (dengan atau tanpa TLS/Auth), dan kondisi jaringan memengaruhi latensi dan throughput komunikasi MQTT.
+
+### Catatan Penting Mengenai Isu Timeout
+Jika Anda mengalami banyak `Timed-out requests`, pastikan:
+1.  Broker berjalan dan dapat diakses oleh skrip benchmark pada host dan port yang benar (sesuai argumen `--bench_broker_host` dan `--bench_broker_port`).
+2.  Responder telah dijalankan **SEBELUM** requester dan berhasil terhubung ke broker.
+3.  Responder dan Requester menggunakan `--request_topic` yang **SAMA**.
+4.  Firewall tidak memblokir koneksi ke port broker.
+5.  Tidak ada error koneksi atau subskripsi yang signifikan di log responder atau requester.
+6.  Jika menguji koneksi dengan TLS/Auth, pastikan sertifikat dan kredensial sudah benar.
+
+---
 
 ## Dibuat oleh: Grup M
+```
