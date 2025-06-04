@@ -125,8 +125,10 @@ def create_mqtt_client(client_id,
                 certfile=str(client_cert_abs_obj) if mTLS_enabled else None,
                 keyfile=str(client_key_abs_obj) if mTLS_enabled else None,
                 cert_reqs=ssl.CERT_REQUIRED,
-                tls_version=ssl.PROTOCOL_TLS_CLIENT
+                tls_version=ssl.PROTOCOL_TLS_CLIENT,
+                ciphers=None
             )
+            client.tls_insecure_set(False)  # Disable insecure mode
             current_broker_port = tls_port
             print(f"  TLS configured. Target port: {current_broker_port}.")
             if mTLS_enabled: print("  mTLS (Client Certificate Authentication) is configured.")

@@ -238,5 +238,62 @@ Lampu akan terhubung, mengirim status "online", mengirim status ON/OFF awalnya, 
 *   **Keamanan:** Semua komunikasi ini sekarang berjalan melalui koneksi TLS terenkripsi dan memerlukan autentikasi.
 
 ---
+---
+
+## Benchmark: Uji Latensi Request-Response
+
+Sebuah skrip benchmark `benchmark_req_res.py` disertakan untuk menguji latensi request-response dari setup MQTT Anda. Skrip ini mensimulasikan klien *requester* yang mengirim pesan dan klien *responder* yang membalasnya, sambil mengukur waktu bolak-balik (*round-trip time* / RTT).
+
+### Cara Menjalankan Benchmark
+
+1.  **Pastikan Prasyarat Terpenuhi:**
+    *   Broker Mosquitto berjalan dengan TLS dan Autentikasi aktif sesuai dengan setup proyek.
+    *   File `config/settings.json` telah dikonfigurasi dengan benar.
+    *   Lingkungan virtual Python (venv) sudah diaktifkan.
+
+2.  **Terminal 1: Jalankan Klien Responder**
+    Responder akan mendengarkan request pada topik tertentu dan mengirimkan balasan.
+    ```bash
+    # Navigasi ke root direktori proyek
+    # Aktifkan venv
+    python benchmark_req_res.py responder [opsi]
+    ```
+    Contoh:
+    ```bash
+    python benchmark_req_res.py responder --qos 1 --request_topic "benchmark/rtt_test" --response_topic_base "benchmark/rtt_test_ack/" --res_payload_size 256
+    ```
+
+3.  **Terminal 2: Jalankan Klien Requester**
+    Requester akan mengirim sejumlah request yang telah dikonfigurasi dan mengukur RTT.
+    ```bash
+    # Navigasi ke root direktori proyek
+    # Aktifkan venv
+    python benchmark_req_res.py requester [opsi]
+    ```
+    Contoh:
+    ```bash
+    python benchmark_req_res.py requester --num_requests 1000 --qos 1 --request_topic "benchmark/rtt_test" --response_topic_base "benchmark/rtt_test_ack/" --req_payload_size 128 --delay 0
+    ```
+
+### Opsi Benchmark (berlaku untuk requester dan responder jika relevan)
+
+*   `role`: `requester` atau `responder`.
+*   `--num_requests N`: (Hanya Requester) Jumlah request yang akan dikirim (default: 100).
+*   `--req_payload_size BYTES`: Ukuran payload request dalam byte (default: 128).
+*   `--res_payload_size BYTES`: Ukuran payload response dalam byte (default: 128).
+*   `--qos LEVEL`: Level QoS MQTT (0, 1, atau 2) untuk pesan benchmark (default: 1). *Pastikan requester dan responder menggunakan QoS dan topik yang kompatibel.*
+*   `--request_topic TOPIC_PATH`: Topik untuk mengirim request (default: `benchmark/request`).
+*   `--response_topic_base TOPIC_PATH_BASE`: Topik dasar untuk response. Requester akan menambahkan ID unik (default: `benchmark/response/`).
+*   `--delay DETIK`: (Hanya Requester) Jeda dalam detik antar pengiriman request (default: 0, untuk secepat mungkin).
+
+### Menginterpretasikan Hasil
+
+Klien requester akan menampilkan output:
+*   Jumlah request yang berhasil, *timeout*, dan gagal (error).
+*   Nilai Minimum, Maksimum, Rata-rata, dan Standar Deviasi dari Round-Trip Times (RTT) dalam milidetik (ms).
+*   Total durasi benchmark.
+*   Throughput dalam Requests Per Second (RPS).
+
+Ini memungkinkan Anda untuk mengamati bagaimana faktor-faktor seperti level QoS, ukuran payload, dan kondisi jaringan memengaruhi latensi komunikasi MQTT di lingkungan spesifik Anda. Perlu dicatat bahwa benchmark ini mengukur latensi melalui broker MQTT lokal Anda.
 
 ## Dibuat oleh: Grup M
